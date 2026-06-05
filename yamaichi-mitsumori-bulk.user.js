@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.3.0
-// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。
+// @version      1.4.0
+// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @run-at       document-idle
 // @grant        none
@@ -26,7 +26,8 @@
 //   ※対応済み：見積情報（商品項目・数量・単位・売価単価=見積単価）＋備考情報（備考=室名+仕様）
 //     ＋負担情報（依頼元単価=請求単価／家主・契約者の負担%を負担区分から自動）。
 //     負担区分: 家主→家主100%/契約者0%、入居者(契約者/退去者)→家主0%/契約者100%。
-//     内容情報タブ（担当者名/アンペア数/特記事項）は今後の段階で追加予定。
+//   ※内容情報：貼り付け先頭の「立会担当者/アンペア数/特記(備考)」ラベル行を読み、「内容情報を入力」ボタンで
+//     内容フォームを開き 担当社員＝立会担当者、内容＝「※アンペア数 ○○A」＋特記 を入力。【登録ボタンは押さない】
 
 (function () {
   'use strict';
@@ -106,6 +107,77 @@
       out.push({ name: nm, tanka: tk, qty: (c[2] || '').replace(/[^\d.]/g, '') || '1', unit: c[3] || '', biko: '', seikyu: '', futan: '' });
     });
     return out;
+  }
+
+  // 先頭の「ラベル[Tab]値」ブロック（商品項目の表より前）から案件単位の情報を拾う
+  function parseHeader(text) {
+    var lines = text.split(/\r?\n/);
+    var h = { tantou: '', ampere: '', tokki: '' };
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.indexOf('商品項目') >= 0) break; // 明細表ヘッダーに到達したら終了
+      var c = (ln.indexOf('\t') >= 0 ? ln.split('\t') : ln.split(',')).map(function (x) { return x.trim(); });
+      if (c.length < 2 || !c[1]) continue;
+      var label = c[0];
+      if (/担当/.test(label)) h.tantou = c[1];
+      else if (/アンペア/.test(label)) h.ampere = c[1];
+      else if (/特記|備考/.test(label)) h.tokki = c[1];
+    }
+    return h;
+  }
+
+  // 内容情報タブ：「内容」フォームを開いて担当社員・内容を入力（登録は手動・押さない）
+  function fillNaiyo(text, statusEl) {
+    var $ = $$();
+    var h = parseHeader(text);
+    if (!h.tantou && !h.ampere && !h.tokki) {
+      statusEl.style.color = '#c00';
+      statusEl.textContent = '担当者・アンペア数等が貼り付けの先頭に見つかりません（立会担当者/アンペア数/特記 のラベル行）';
+      return;
+    }
+    var naiyo = [];
+    if (h.ampere) naiyo.push('※アンペア数 ' + h.ampere);
+    if (h.tokki) naiyo.push(h.tokki);
+    var naiyoStr = naiyo.join('\n');
+    // 目標値をフィールドへ「再アサート」（登録ボタン btn_edit は絶対に押さない）
+    var assert = function () {
+      var shn = document.getElementById('txtShnName');
+      var ta = document.getElementById('taNaiyo');
+      var done = false;
+      if (shn && shn.value !== h.tantou) { shn.value = h.tantou; if ($) $(shn).trigger('change'); }
+      if (ta && ta.value !== naiyoStr) { ta.value = naiyoStr; if ($) $(ta).trigger('change'); }
+      if (shn || ta) done = true;
+      return done;
+    };
+    var finish = function () {
+      if (document.getElementById('txtShnName') || document.getElementById('taNaiyo')) {
+        statusEl.style.color = '#080';
+        statusEl.textContent = '内容フォームに入力（担当社員=' + h.tantou + '）。確認して『登録』を押してください（登録は手動）。';
+      } else {
+        statusEl.style.color = '#c00';
+        statusEl.textContent = '内容フォームを開けませんでした。内容情報タブで「内容」を押してから再度お試しください。';
+      }
+    };
+    var ta0 = document.getElementById('taNaiyo');
+    var opened = ta0 && ta0.getBoundingClientRect().height > 0;
+    if (!opened) {
+      var btn = [...document.querySelectorAll('img')].find(function (e) { return /btn_contents\.gif/.test(e.src || ''); });
+      if (!btn) {
+        statusEl.style.color = '#c00';
+        statusEl.textContent = '「内容」ボタンが見つかりません（内容情報タブで手動で開いてください）';
+        return;
+      }
+      if ($) $(btn).click(); else btn.click();
+    }
+    // フォームを開く際の非同期リセットに負けないよう、約2.6秒間 値を再アサートし続ける
+    statusEl.style.color = '#555';
+    statusEl.textContent = '内容フォームに入力中…';
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      assert();
+      if (tries >= 18) { clearInterval(iv); finish(); }
+    }, 150);
   }
 
   function run(text, statusEl) {
@@ -188,8 +260,9 @@
       + '<button id="kowaBulkRun" style="flex:1;background:#2f5597;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">入力実行</button>'
       + '<button id="kowaBulkClear" style="background:#ddd;border:0;border-radius:4px;padding:7px 10px;cursor:pointer;">クリア</button>'
       + '</div>'
+      + '<button id="kowaBulkNaiyo" style="width:100%;margin-top:6px;background:#0a7d3b;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">内容情報を入力（担当者・アンペア数）</button>'
       + '<div id="kowaBulkStatus" style="margin-top:6px;min-height:16px;color:#555;"></div>'
-      + '<div style="margin-top:4px;color:#999;font-size:11px;">※入力後は積算シートと合計金額が合うか確認。保存は「登録」ボタンで（「確定」「削除」は押さない）。</div>'
+      + '<div style="margin-top:4px;color:#999;font-size:11px;">※入力後は積算シートと合計金額が合うか確認。保存は「登録」ボタンで（「確定」「削除」は押さない）。<br>※「内容情報を入力」は内容フォームに担当者・アンペア数を入れるだけ。<b>登録ボタンは自分で確認して押す</b>こと。</div>'
       + '</div>';
     document.body.appendChild(wrap);
 
@@ -200,6 +273,9 @@
     };
     wrap.querySelector('#kowaBulkRun').onclick = function () {
       run(document.getElementById('kowaBulkInput').value, document.getElementById('kowaBulkStatus'));
+    };
+    wrap.querySelector('#kowaBulkNaiyo').onclick = function () {
+      fillNaiyo(document.getElementById('kowaBulkInput').value, document.getElementById('kowaBulkStatus'));
     };
     wrap.querySelector('#kowaBulkClear').onclick = function () {
       document.getElementById('kowaBulkInput').value = '';

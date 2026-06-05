@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.1.0
-// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報タブの「その他商品情報」へ一括投入する（商品項目・数量・単位・売価単価=請求単価）。
+// @version      1.1.1
+// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報タブの「その他商品情報」へ一括投入する（商品項目・数量・単位・売価単価=見積単価）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @run-at       document-idle
 // @grant        none
@@ -18,8 +18,8 @@
 //
 // ▼ 対応している貼り付け形式
 //   (1) 積算シートの表（推奨）… ヘッダー行を自動判別して列を割り当てます。
-//       必要な列見出し: 商品項目 / 数量 / 単位 / 請求単価（無ければ 見積単価→売価単価）
-//       ・売価単価には「請求単価」を採用（負担区分が反映済みの請求価格）
+//       必要な列見出し: 商品項目 / 数量 / 単位 / 見積単価（無ければ 売価単価→請求単価）
+//       ・売価単価には「見積単価」を採用（請求単価=マークアップ後は負担/請求側で使用）
 //       ・余分な列（過失・備考・見積小計・請求小計 等）は無視
 //   (2) 単純形式（フォールバック）… ヘッダーが無いとき 1行=「品名,単価,数量,単位」として読む
 //
@@ -76,9 +76,9 @@
       var H = rows[hIdx];
       var col = function (n) { return H.indexOf(n); };
       var cName = col('商品項目'), cQty = col('数量'), cUnit = col('単位');
-      // 売価単価＝請求単価（無ければ見積単価→売価単価）
-      var cPrice = col('請求単価') >= 0 ? col('請求単価')
-        : (col('見積単価') >= 0 ? col('見積単価') : col('売価単価'));
+      // 売価単価＝見積単価（無ければ売価単価→請求単価）
+      var cPrice = col('見積単価') >= 0 ? col('見積単価')
+        : (col('売価単価') >= 0 ? col('売価単価') : col('請求単価'));
       for (var i = hIdx + 1; i < rows.length; i++) {
         var r = rows[i];
         var nm = cName >= 0 ? (r[cName] || '').trim() : '';
@@ -155,7 +155,7 @@
       + '<span>📋 見積 一括入力</span><span id="kowaBulkMin" style="cursor:pointer;padding:0 6px;">－</span></div>'
       + '<div id="kowaBulkBody" style="padding:10px;">'
       + '<div style="color:#555;margin-bottom:5px;">積算シートの表を<b>ヘッダー行ごと</b>コピーして貼り付け → 入力実行。<br>'
-      + '見積情報タブの「その他商品情報」に <b>商品項目・数量・単位・売価単価(=請求単価)</b> を一括投入します。</div>'
+      + '見積情報タブの「その他商品情報」に <b>商品項目・数量・単位・売価単価(=見積単価)</b> を一括投入します。</div>'
       + '<textarea id="kowaBulkInput" rows="8" style="width:100%;box-sizing:border-box;font:12px monospace;" placeholder="過失  商品項目  備考(室名+仕様)  数量  単位  負担区分  見積単価  見積小計  請求単価  請求小計&#10;（↑この表をヘッダーごとコピペ。タブ区切りでそのまま貼ればOK）"></textarea>'
       + '<div style="margin-top:6px;display:flex;gap:6px;">'
       + '<button id="kowaBulkRun" style="flex:1;background:#2f5597;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">入力実行</button>'

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.4.0
-// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。
+// @version      1.5.0
+// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @run-at       document-idle
 // @grant        none
@@ -112,7 +112,7 @@
   // 先頭の「ラベル[Tab]値」ブロック（商品項目の表より前）から案件単位の情報を拾う
   function parseHeader(text) {
     var lines = text.split(/\r?\n/);
-    var h = { tantou: '', ampere: '', tokki: '' };
+    var h = { tantou: '', ampere: '', tokki: '', savePath: '' };
     for (var i = 0; i < lines.length; i++) {
       var ln = lines[i];
       if (ln.indexOf('商品項目') >= 0) break; // 明細表ヘッダーに到達したら終了
@@ -121,9 +121,42 @@
       var label = c[0];
       if (/担当/.test(label)) h.tantou = c[1];
       else if (/アンペア/.test(label)) h.ampere = c[1];
+      else if (/保存先|フォルダ/.test(label)) h.savePath = c[1];
       else if (/特記|備考/.test(label)) h.tokki = c[1];
     }
     return h;
+  }
+
+  // クリップボードへコピー（クリックハンドラ内で同期実行）
+  function copyText(s) {
+    try {
+      var t = document.createElement('textarea');
+      t.value = s; t.style.position = 'fixed'; t.style.left = '-9999px';
+      document.body.appendChild(t); t.focus(); t.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(t);
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  // 保存先フォルダをコピー（参照ダイアログのファイル名欄に貼り付け→Enterでフォルダへ飛べる）
+  function copySavePath(text, statusEl) {
+    var h = parseHeader(text);
+    if (!h.savePath) {
+      statusEl.style.color = '#c00';
+      statusEl.textContent = '保存先フォルダの行が見つかりません（貼り付け先頭に「保存先フォルダ[Tab]パス」が必要）';
+      return;
+    }
+    var done = function (ok) {
+      statusEl.style.color = ok ? '#080' : '#c00';
+      statusEl.textContent = (ok ? '📋コピーしました → ' : 'コピー失敗(手動でコピーを): ') + h.savePath
+        + (ok ? '｜「参照」→ファイル名欄に貼り付けEnterでフォルダへ' : '');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(h.savePath).then(function () { done(true); }, function () { done(copyText(h.savePath)); });
+    } else {
+      done(copyText(h.savePath));
+    }
   }
 
   // 内容情報タブ：「内容」フォームを開いて担当社員・内容を入力（登録は手動・押さない）
@@ -261,7 +294,8 @@
       + '<button id="kowaBulkClear" style="background:#ddd;border:0;border-radius:4px;padding:7px 10px;cursor:pointer;">クリア</button>'
       + '</div>'
       + '<button id="kowaBulkNaiyo" style="width:100%;margin-top:6px;background:#0a7d3b;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">内容情報を入力（担当者・アンペア数）</button>'
-      + '<div id="kowaBulkStatus" style="margin-top:6px;min-height:16px;color:#555;"></div>'
+      + '<button id="kowaBulkPath" style="width:100%;margin-top:6px;background:#8a5a00;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">📋 保存先フォルダをコピー（その他情報の添付用）</button>'
+      + '<div id="kowaBulkStatus" style="margin-top:6px;min-height:16px;color:#555;word-break:break-all;"></div>'
       + '<div style="margin-top:4px;color:#999;font-size:11px;">※入力後は積算シートと合計金額が合うか確認。保存は「登録」ボタンで（「確定」「削除」は押さない）。<br>※「内容情報を入力」は内容フォームに担当者・アンペア数を入れるだけ。<b>登録ボタンは自分で確認して押す</b>こと。</div>'
       + '</div>';
     document.body.appendChild(wrap);
@@ -276,6 +310,9 @@
     };
     wrap.querySelector('#kowaBulkNaiyo').onclick = function () {
       fillNaiyo(document.getElementById('kowaBulkInput').value, document.getElementById('kowaBulkStatus'));
+    };
+    wrap.querySelector('#kowaBulkPath').onclick = function () {
+      copySavePath(document.getElementById('kowaBulkInput').value, document.getElementById('kowaBulkStatus'));
     };
     wrap.querySelector('#kowaBulkClear').onclick = function () {
       document.getElementById('kowaBulkInput').value = '';

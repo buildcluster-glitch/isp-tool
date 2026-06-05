@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.2.0
-// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報へ一括投入する（商品項目・数量・単位・売価単価=見積単価・備考=室名+仕様）。
+// @version      1.2.1
+// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報へ一括投入する（商品項目・数量・単位・売価単価=見積単価・備考=室名+仕様）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @run-at       document-idle
 // @grant        none
@@ -118,25 +118,33 @@
         if ($) { $('#btn_Add').click(); } else { document.getElementById('btn_Add').click(); }
         have = rowIndexes();
       }
-      var unmatched = [];
-      items.forEach(function (it, i) {
-        var idx = have[i];
-        setVal('txtShnInfoSyohin_' + idx, it.name, false);
-        setVal('txtShnInfoGenkaTanka_' + idx, it.tanka, true);
-        setVal('txtShnInfoSuryo_' + idx, it.qty, true);
-        if (it.biko) setVal('txtShnInfoRemark_' + idx, it.biko, false); // 備考情報タブの備考
-        if (it.unit) {
-          if (UNIT[it.unit]) {
-            var s = document.getElementsByName('slcShnInfoUntCd_' + idx)[0];
-            if (s) { s.value = UNIT[it.unit]; if ($) $(s).trigger('change'); }
-          } else {
-            unmatched.push(it.unit);
-          }
+      // have の全行を走査し、明細数まで埋め、余った既存行はクリア（重ね貼り・残り行のズレ防止）
+      var unmatched = [], cleared = 0;
+      have.forEach(function (idx, i) {
+        var unitSel = document.getElementsByName('slcShnInfoUntCd_' + idx)[0];
+        if (i < items.length) {
+          var it = items[i];
+          setVal('txtShnInfoSyohin_' + idx, it.name, false);
+          setVal('txtShnInfoSyohin03_' + idx, it.name, false); // 備考/内容/負担タブ側に表示される商品名も同期
+          setVal('txtShnInfoGenkaTanka_' + idx, it.tanka, true);
+          setVal('txtShnInfoSuryo_' + idx, it.qty, true);
+          setVal('txtShnInfoRemark_' + idx, it.biko || '', false); // 備考情報タブの備考（空なら空で上書き）
+          if (unitSel) { unitSel.value = (it.unit && UNIT[it.unit]) ? UNIT[it.unit] : '0'; if ($) $(unitSel).trigger('change'); }
+          if (it.unit && !UNIT[it.unit]) unmatched.push(it.unit);
+        } else {
+          setVal('txtShnInfoSyohin_' + idx, '', false);
+          setVal('txtShnInfoSyohin03_' + idx, '', false);
+          setVal('txtShnInfoGenkaTanka_' + idx, '', true);
+          setVal('txtShnInfoSuryo_' + idx, '', false);
+          setVal('txtShnInfoRemark_' + idx, '', false);
+          if (unitSel) { unitSel.value = '0'; if ($) $(unitSel).trigger('change'); }
+          cleared++;
         }
       });
       var total = (document.getElementsByName('txtHchInfoMitsumoriTotalKingaku')[0] || {}).value || '';
       statusEl.style.color = '#080';
       var msg = items.length + '件入力（見積金額合計: ' + total + ' 円）';
+      if (cleared) msg += '｜余り' + cleared + '行をクリア';
       if (unmatched.length) msg += '｜単位未対応で手動選択が必要: ' + Array.from(new Set(unmatched)).join('・');
       statusEl.textContent = msg;
     } catch (e) {

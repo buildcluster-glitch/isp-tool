@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.6.0
+// @version      1.7.0
 // @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
+// @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_list.asp*
 // @run-at       document-idle
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/buildcluster-glitch/isp-tool/main/yamaichi-mitsumori-bulk.user.js
@@ -437,8 +438,113 @@
     if (auto && hit && !kDone(hit.kanryo)) { kFill(hit.kanryo, hit.hatchu); setTimeout(kRegister, 300); }
   }
 
-  // ---- 起動：ページで分岐（見積ページ=従来パネル / 工事完了ページ=完了日パネル）----
-  function boot() { if (kIsPage()) buildKanryoPanel(); else buildPanel(); }
+  // ===================================================================
+  // V2: 一括バッチ（一覧⇄編集を自動で回す）。@matchに repair_list.asp 追加。
+  //   検索/詳細のクリックハンドラは内側div（#divSearch / #detail_N）に付くので、そこをclickする。
+  //   安全: 開いた物件がリストと不一致→停止／既に別の完了日→停止／確定は手動／ドライランあり。
+  // ===================================================================
+  var K_LS_BATCH = 'isp_batch';
+  function kIsListPage() { return /\/spodr\/repair_comp\/repair_list\.asp/i.test(location.pathname); }
+  function bGet() { try { return JSON.parse(localStorage.getItem(K_LS_BATCH) || 'null'); } catch (e) { return null; } }
+  function bSet(o) { localStorage.setItem(K_LS_BATCH, JSON.stringify(o)); }
+  function bStop(msg) { var b = bGet(); if (b) { b.running = false; bSet(b); } if (msg) alert('一括処理を停止：\n' + msg); }
+  function kClick(el) { if (!el) return false; if (window.jQuery) window.jQuery(el).trigger('click'); else el.click(); return true; }
+
+  function maybeRunBatchList() {
+    var b = bGet(); if (!b || !b.running) return;
+    if (b.idx >= b.items.length) { b.running = false; bSet(b); alert('一括処理 完了：' + b.items.length + '件' + (b.dry ? '（ドライラン）' : '（登録・未確定）') + '。\n各レコードで内容を確認して「確定」を押してください。'); return; }
+    var it = b.items[b.idx];
+    if (b.phase === 'search') {
+      var ni = document.getElementsByName('txtSearchTtyName')[0];
+      if (ni) ni.value = it.bukken;
+      ['txtSearchKoujiNo', 'txtSearchTtyKnrNo', 'txtSearchBasyoName'].forEach(function (n) { var e = document.getElementsByName(n)[0]; if (e) e.value = ''; });
+      b.phase = 'open'; bSet(b);
+      setTimeout(function () { kClick(document.getElementById('divSearch')); }, 500); // 検索ハンドラは内側#divSearch
+      return;
+    }
+    if (b.phase === 'open') {
+      var rows = [].slice.call(document.querySelectorAll('table tr')).filter(function (tr) { return tr.querySelectorAll('td').length >= 4 && tr.textContent.indexOf('建物名') < 0; });
+      var target = null;
+      rows.forEach(function (tr) {
+        if (target) return;
+        var tds = [].slice.call(tr.querySelectorAll('td')).map(function (td) { return td.textContent.trim(); });
+        var hasB = tds.some(function (t) { return kNorm(t) && kNorm(t).indexOf(kNorm(it.bukken)) >= 0; });
+        var hasR = !it.room || tds.some(function (t) { return /\d/.test(t) && kNz(t) === kNz(it.room); });
+        if (hasB && hasR) target = tr;
+      });
+      if (!target) { bStop('一覧に該当行が見つかりません → ' + it.bukken + ' ' + it.room + '（' + (b.idx + 1) + '件目）'); return; }
+      var det = target.querySelector('div[id^="detail_"]') || target.querySelector('a'); // 詳細ハンドラは内側#detail_N
+      setTimeout(function () { kClick(det); }, 400);
+      return;
+    }
+  }
+
+  function maybeRunBatchEdit() {
+    var b = bGet(); if (!b || !b.running) return;
+    if (b.idx >= b.items.length) { b.running = false; bSet(b); return; }
+    var it = b.items[b.idx], rec = kRec();
+    var bkOk = kNorm(rec.bukken) && (kNorm(rec.bukken).indexOf(kNorm(it.bukken)) >= 0 || kNorm(it.bukken).indexOf(kNorm(rec.bukken)) >= 0);
+    var rmOk = !it.room || kNz(rec.room) === kNz(it.room);
+    if (!bkOk || !rmOk) { bStop('開いた物件がリストと不一致。\n期待: ' + it.bukken + ' ' + it.room + '\n実際: ' + rec.bukken + ' ' + rec.room); return; }
+    var el = document.getElementsByName('txtSyuzenKoujiKanryoDate')[0], cur = el ? el.value : '';
+    var advance = function () {
+      var bb = bGet(); bb.idx++;
+      if (bb.idx >= bb.items.length) { bb.running = false; bSet(bb); alert('一括処理 完了：' + bb.items.length + '件' + (bb.dry ? '（ドライラン）' : '（登録・未確定）') + '。\n各レコードで確認して「確定」を押してください。'); }
+      else { bb.phase = 'search'; bSet(bb); setTimeout(function () { location.href = 'repair_list.asp'; }, 600); }
+    };
+    if (cur === kYmd(it.kanryo)) { advance(); return; }   // 登録済み(or登録後の再読込)→次へ
+    if (cur) { bStop('既に別の完了日（' + cur + '）が入っています。手動確認を: ' + rec.bukken + ' ' + rec.room); return; }
+    kFill(it.kanryo, it.hatchu);                          // 空→入力
+    if (b.dry) { setTimeout(advance, 1000); return; }     // ドライラン：登録せず次へ
+    setTimeout(kRegister, 300);                           // 本番：登録→postback→再読込→cur==target→advance
+    setTimeout(function () {                              // 登録失敗監視（再読込されればこのタイマーは消える）
+      var e2 = document.getElementsByName('txtSyuzenKoujiKanryoDate')[0];
+      if (e2 && e2.value !== kYmd(it.kanryo)) bStop('登録できていない可能性: ' + rec.bukken + ' ' + rec.room + '（手動確認を）');
+    }, 5000);
+  }
+
+  function buildBatchPanel() {
+    if (document.getElementById('kowaBatchPanel')) return;
+    var b = bGet();
+    var wrap = document.createElement('div');
+    wrap.id = 'kowaBatchPanel';
+    wrap.style.cssText = 'position:fixed;top:90px;right:16px;z-index:99999;width:330px;font:12px/1.5 "Meiryo",sans-serif;background:#fff;border:2px solid #6a1b9a;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);';
+    wrap.innerHTML =
+      '<div style="background:#6a1b9a;color:#fff;padding:7px 10px;font-weight:bold;border-radius:5px 5px 0 0;">⚙️ ISP完了日 一括バッチ</div>'
+      + '<div style="padding:10px;">'
+      + '<div style="color:#555;margin-bottom:5px;font-size:11px;">リストを貼って開始すると、各物件を自動で開いて完了日を入力→登録まで回します（<b>確定は手動</b>）。まず<b>ドライラン</b>で動作確認を推奨。</div>'
+      + '<textarea id="kb_list" rows="6" style="width:100%;box-sizing:border-box;font:11px monospace;" placeholder="物件名 号室 完了日 発注日（1行1物件）&#10;クレージェ原町 202 6/18 6/10"></textarea>'
+      + '<div style="display:flex;gap:6px;margin-top:6px;">'
+      + '<button id="kb_dry" style="flex:1;background:#0277bd;color:#fff;border:0;border-radius:4px;padding:7px;cursor:pointer;">ドライラン</button>'
+      + '<button id="kb_run" style="flex:1;background:#6a1b9a;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">本番開始</button>'
+      + '<button id="kb_stop" style="background:#c62828;color:#fff;border:0;border-radius:4px;padding:7px 10px;cursor:pointer;">停止</button></div>'
+      + '<div id="kb_status" style="margin-top:6px;font-size:11px;color:#333;min-height:16px;"></div>'
+      + '<div style="font-size:11px;color:#b71c1c;margin-top:4px;">※ドライランは登録せず動作だけ。確定は最後に人が押す。途中で止めたい時は「停止」。</div>'
+      + '</div>';
+    document.body.appendChild(wrap);
+    var q = function (id) { return wrap.querySelector(id); };
+    q('#kb_list').value = localStorage.getItem(K_LS_LIST) || '';
+    var stat = q('#kb_status');
+    if (b && b.running && b.items[b.idx]) stat.textContent = '実行中… ' + (b.idx + 1) + '/' + b.items.length + '：' + b.items[b.idx].bukken + ' ' + b.items[b.idx].room + (b.dry ? '（ドライラン）' : '');
+    var start = function (dry) {
+      var items = kParseList(q('#kb_list').value);
+      if (!items.length) { stat.style.color = '#c00'; stat.textContent = 'リストが空です（物件名 号室 完了日 発注日）'; return; }
+      localStorage.setItem(K_LS_LIST, q('#kb_list').value);
+      bSet({ running: true, dry: !!dry, items: items, idx: 0, phase: 'search' });
+      stat.style.color = '#333'; stat.textContent = (dry ? 'ドライラン' : '本番') + '開始：' + items.length + '件…';
+      setTimeout(maybeRunBatchList, 300);
+    };
+    q('#kb_run').onclick = function () { if (window.confirm('本番実行します（各物件を自動で開いて入力→登録。確定は手動）。よろしいですか？')) start(false); };
+    q('#kb_dry').onclick = function () { start(true); };
+    q('#kb_stop').onclick = function () { var bb = bGet(); if (bb) { bb.running = false; bSet(bb); } stat.textContent = '停止しました'; };
+  }
+
+  // ---- 起動：ページで3分岐（見積=従来 / 工事完了編集=完了日パネル+バッチ実行 / 工事完了一覧=バッチパネル+実行）----
+  function boot() {
+    if (kIsListPage()) { buildBatchPanel(); maybeRunBatchList(); }
+    else if (kIsPage()) { var b = bGet(); if (b && b.running) { maybeRunBatchEdit(); } else { buildKanryoPanel(); } }
+    else { buildPanel(); }
+  }
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(boot, 600);
   } else {

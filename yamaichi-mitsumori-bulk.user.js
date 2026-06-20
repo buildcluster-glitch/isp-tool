@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.7.2
+// @version      1.7.3
 // @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
@@ -371,8 +371,12 @@
   function kSet(el, v) { if (!el) return; el.value = v; ['change', 'blur'].forEach(function (ev) { el.dispatchEvent(new Event(ev, { bubbles: true })); }); }
   function kKill() { try { window.confirm = function () { return true; }; window.alert = function () { }; window.onbeforeunload = null; } catch (e) { } }
   function kRec() {
-    var el = document.getElementsByName('div_title')[0];
-    var t = (el && el.value) || document.title || '';
+    var el = document.getElementById('div_title'); // ※name属性は無くidだけ（getElementsByNameでは取れない）
+    var t = (el && (el.value || el.textContent)) || '';
+    if (!/（.+[：:].+）/.test(t)) { // 念のため画面本文から「原状回復（物件名：号室）」を拾うフォールバック
+      var c = (document.body.innerText || '').match(/原状回復\s*（[^）]+[：:][^）]+）/);
+      if (c) t = c[0];
+    }
     var m = t.match(/（(.+?)[：:](.+?)）/);
     return m ? { bukken: m[1].trim(), room: m[2].trim() } : { bukken: '', room: '' };
   }
@@ -506,10 +510,12 @@
     }
   }
 
-  function maybeRunBatchEdit() {
+  function maybeRunBatchEdit(tries) {
+    tries = tries || 0;
     var b = bGet(); if (!b || !b.running) return;
     if (b.idx >= b.items.length) { b.running = false; bSet(b); return; }
     var it = b.items[b.idx], rec = kRec();
+    if (!rec.bukken && tries < 15) { setTimeout(function () { maybeRunBatchEdit(tries + 1); }, 300); return; } // 物件名が読めるまで待つ(最大~4.5秒)
     var bkOk = kNorm(rec.bukken) && (kNorm(rec.bukken).indexOf(kNorm(it.bukken)) >= 0 || kNorm(it.bukken).indexOf(kNorm(rec.bukken)) >= 0);
     var rmOk = !it.room || kNz(rec.room) === kNz(it.room);
     if (!bkOk || !rmOk) { bStop('開いた物件がリストと不一致。\n期待: ' + it.bukken + ' ' + it.room + '\n実際: ' + rec.bukken + ' ' + rec.room); return; }

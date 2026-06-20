@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.7.4
+// @version      1.7.5
 // @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
@@ -395,9 +395,10 @@
         else { bukken = head; }
         return { bukken: bukken, room: room, kanryo: kYmd(mk[1]), hatchu: kYmd(mh[1]), yotei: /完了予定/.test(mk[0]) };
       }
-      // 従来形式（ラベル無し）:「物件名 号室 完了日 発注日」
+      // 従来形式（ラベル無し）:「物件名 号室 完了日 発注日」。末尾2つが日付の行だけ採用（クラ助のタイムスタンプ等を除外）
       var t2 = l.split(/[\s,　]+/).filter(Boolean);
-      if (t2.length >= 3) {
+      var D = /^(\d{1,2}\/\d{1,2}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})$/;
+      if (t2.length >= 3 && D.test(t2[t2.length - 2]) && D.test(t2[t2.length - 1])) {
         var room2 = '', bk2 = '';
         if (t2.length >= 4) { room2 = t2[t2.length - 3]; bk2 = t2.slice(0, t2.length - 3).join(' '); }
         else { bk2 = t2.slice(0, t2.length - 2).join(' '); }

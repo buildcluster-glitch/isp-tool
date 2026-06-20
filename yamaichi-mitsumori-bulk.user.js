@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.5.1
-// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。
+// @version      1.6.0
+// @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
+// @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
 // @run-at       document-idle
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/buildcluster-glitch/isp-tool/main/yamaichi-mitsumori-bulk.user.js
@@ -349,9 +350,98 @@
     })();
   }
 
+  // ===================================================================
+  // 工事完了ページ（repair_comp_edit.asp）：完了日 一括入力（同一ISPの別ページ）
+  //   修繕完了日＝実完了日／各商品の工事完了日＝発注書発行日。登録まで自動・確定は手動。
+  //   見積ページ側のコードには一切触れない（URLで分岐）。@grant none なので window.confirm 直で効く。
+  // ===================================================================
+  var K_LS_LIST = 'isp_kanryo_list', K_LS_AUTO = 'isp_kanryo_auto';
+  function kIsPage() { return /\/spodr\/repair_comp\/repair_comp_edit\.asp/i.test(location.pathname); }
+  function kNorm(s) { return String(s || '').replace(/[\s　]/g, '').toLowerCase(); }
+  function kNz(s) { return String(s || '').replace(/^0+/, ''); }
+  function kYmd(s) {
+    s = String(s || '').trim().replace(/-/g, '/');
+    var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+    if (m) return m[1] + '/' + ('0' + m[2]).slice(-2) + '/' + ('0' + m[3]).slice(-2);
+    m = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (m) return '2026/' + ('0' + m[1]).slice(-2) + '/' + ('0' + m[2]).slice(-2);
+    return s;
+  }
+  function kSet(el, v) { if (!el) return; el.value = v; ['change', 'blur'].forEach(function (ev) { el.dispatchEvent(new Event(ev, { bubbles: true })); }); }
+  function kKill() { try { window.confirm = function () { return true; }; window.alert = function () { }; window.onbeforeunload = null; } catch (e) { } }
+  function kRec() {
+    var el = document.getElementsByName('div_title')[0];
+    var t = (el && el.value) || document.title || '';
+    var m = t.match(/（(.+?)[：:](.+?)）/);
+    return m ? { bukken: m[1].trim(), room: m[2].trim() } : { bukken: '', room: '' };
+  }
+  function kParseList(text) {
+    return text.split(/\n/).map(function (l) { return l.trim(); }).filter(Boolean).map(function (l) {
+      var tk = l.split(/[\s,　]+/).filter(Boolean);
+      if (tk.length < 3) return null;
+      var hatchu = tk[tk.length - 1], kanryo = tk[tk.length - 2], room = '', bukken = '';
+      if (tk.length >= 4) { room = tk[tk.length - 3]; bukken = tk.slice(0, tk.length - 3).join(' '); }
+      else { bukken = tk.slice(0, tk.length - 2).join(' '); }
+      return { bukken: bukken, room: room, kanryo: kYmd(kanryo), hatchu: kYmd(hatchu) };
+    }).filter(Boolean);
+  }
+  function kMatch(list, rec) {
+    return list.find(function (x) {
+      var bk = kNorm(x.bukken) && (kNorm(rec.bukken).indexOf(kNorm(x.bukken)) >= 0 || kNorm(x.bukken).indexOf(kNorm(rec.bukken)) >= 0);
+      var rm = !x.room || kNz(rec.room) === kNz(x.room);
+      return bk && rm;
+    });
+  }
+  function kFill(kanryo, hatchu) {
+    kKill();
+    kSet(document.getElementsByName('txtSyuzenKoujiKanryoDate')[0], kYmd(kanryo));
+    var items = document.querySelectorAll('input[name^="txtShnInfoKoujiKanryoDate_"]');
+    items.forEach(function (el) { kSet(el, kYmd(hatchu)); });
+    return items.length;
+  }
+  function kRegister() { kKill(); var img = document.getElementById('btn_02_img'); if (img) (img.closest('a') || img.parentElement).click(); }
+  function kDone(kanryo) { var el = document.getElementsByName('txtSyuzenKoujiKanryoDate')[0]; return !!(el && el.value && el.value === kYmd(kanryo)); }
+
+  function buildKanryoPanel() {
+    if (document.getElementById('kowaKanryoPanel')) return;
+    var rec = kRec(), list = kParseList(localStorage.getItem(K_LS_LIST) || ''), hit = kMatch(list, rec), auto = localStorage.getItem(K_LS_AUTO) === '1';
+    var wrap = document.createElement('div');
+    wrap.id = 'kowaKanryoPanel';
+    wrap.style.cssText = 'position:fixed;top:90px;right:16px;z-index:99999;width:330px;font:12px/1.5 "Meiryo",sans-serif;background:#fff;border:2px solid #1565c0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);';
+    wrap.innerHTML =
+      '<div style="background:#1565c0;color:#fff;padding:7px 10px;font-weight:bold;border-radius:5px 5px 0 0;">🔧 ISP完了日 一括入力</div>'
+      + '<div style="padding:10px;">'
+      + '<div id="kk_rec" style="font-size:11px;color:#555;margin-bottom:6px;"></div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:6px;">'
+      + '<label style="flex:1;">完了日<br><input id="kk_kanryo" style="width:100%;box-sizing:border-box;" placeholder="6/19 か 2026/06/19"></label>'
+      + '<label style="flex:1;">発注日<br><input id="kk_hatchu" style="width:100%;box-sizing:border-box;" placeholder="6/2 か 2026/06/02"></label></div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:6px;">'
+      + '<button id="kk_fill" style="flex:1;background:#ddd;border:0;border-radius:4px;padding:7px;cursor:pointer;">入力のみ</button>'
+      + '<button id="kk_reg" style="flex:1;background:#1565c0;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">入力＋登録</button></div>'
+      + '<label style="display:block;margin-bottom:6px;"><input type="checkbox" id="kk_auto"> 自動（開いたら入力＋登録）</label>'
+      + '<details><summary style="cursor:pointer;color:#1565c0;">1日分のリストを貼る（物件 号室 完了日 発注日）</summary>'
+      + '<textarea id="kk_list" rows="5" style="width:100%;box-sizing:border-box;font:11px monospace;" placeholder="フローセラス銀杏町 207 6/19 6/2&#10;クレージェ原町 202 6/18 6/10"></textarea>'
+      + '<button id="kk_save" style="margin-top:4px;cursor:pointer;">リスト保存</button> <span id="kk_msg" style="font-size:11px;color:#080;"></span></details>'
+      + '<div style="font-size:11px;color:#b71c1c;margin-top:6px;">※確定は内容を確認してから手動で押してください</div>'
+      + '</div>';
+    document.body.appendChild(wrap);
+    var q = function (id) { return wrap.querySelector(id); };
+    q('#kk_rec').textContent = rec.bukken ? ('現在: ' + rec.bukken + ' ' + rec.room + (hit ? '（リスト一致）' : '（未一致＝手入力）')) : '物件を判定できません';
+    if (hit) { q('#kk_kanryo').value = hit.kanryo; q('#kk_hatchu').value = hit.hatchu; }
+    q('#kk_list').value = localStorage.getItem(K_LS_LIST) || '';
+    q('#kk_auto').checked = auto;
+    q('#kk_fill').onclick = function () { kFill(q('#kk_kanryo').value, q('#kk_hatchu').value); };
+    q('#kk_reg').onclick = function () { kFill(q('#kk_kanryo').value, q('#kk_hatchu').value); setTimeout(kRegister, 150); };
+    q('#kk_auto').onchange = function (e) { localStorage.setItem(K_LS_AUTO, e.target.checked ? '1' : '0'); };
+    q('#kk_save').onclick = function () { localStorage.setItem(K_LS_LIST, q('#kk_list').value); q('#kk_msg').textContent = '保存しました（次の物件から有効）'; };
+    if (auto && hit && !kDone(hit.kanryo)) { kFill(hit.kanryo, hit.hatchu); setTimeout(kRegister, 300); }
+  }
+
+  // ---- 起動：ページで分岐（見積ページ=従来パネル / 工事完了ページ=完了日パネル）----
+  function boot() { if (kIsPage()) buildKanryoPanel(); else buildPanel(); }
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    setTimeout(buildPanel, 600);
+    setTimeout(boot, 600);
   } else {
-    window.addEventListener('load', function () { setTimeout(buildPanel, 600); });
+    window.addEventListener('load', function () { setTimeout(boot, 600); });
   }
 })();

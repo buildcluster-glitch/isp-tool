@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.7.5
+// @version      1.7.6
 // @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
@@ -556,7 +556,7 @@
       + '<textarea id="kb_list" rows="6" style="width:100%;box-sizing:border-box;font:11px monospace;" placeholder="物件名 号室 完了日 発注日（1行1物件）&#10;クレージェ原町 202 6/18 6/10"></textarea>'
       + '<div style="display:flex;gap:6px;margin-top:6px;">'
       + '<button id="kb_dry" style="flex:1;background:#0277bd;color:#fff;border:0;border-radius:4px;padding:7px;cursor:pointer;">ドライラン</button>'
-      + '<button id="kb_run" style="flex:1;background:#6a1b9a;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">本番開始</button>'
+      + '<button id="kb_run" style="flex:1;background:#6a1b9a;color:#fff;border:0;border-radius:4px;padding:7px;font-weight:bold;cursor:pointer;">登録作業開始</button>'
       + '<button id="kb_stop" style="background:#c62828;color:#fff;border:0;border-radius:4px;padding:7px 10px;cursor:pointer;">停止</button></div>'
       + '<div id="kb_status" style="margin-top:6px;font-size:11px;color:#333;min-height:16px;"></div>'
       + '<div style="font-size:11px;color:#b71c1c;margin-top:4px;">※ドライランは登録せず動作だけ。確定は最後に人が押す。途中で止めたい時は「停止」。</div>'
@@ -573,10 +573,10 @@
       if (!items.length) { stat.style.color = '#c00'; stat.textContent = '登録対象（完了）がありません' + (skipped ? '（完了予定' + skipped + '件は対象外）' : '（形式: 物件名 号室 完了 M/D／発注 M/D）'); return; }
       localStorage.setItem(K_LS_LIST, q('#kb_list').value);
       bSet({ running: true, dry: !!dry, items: items, idx: 0, phase: 'search', skipped: [], conflict: [] });
-      stat.style.color = '#333'; stat.textContent = (dry ? 'ドライラン' : '本番') + '開始：' + items.length + '件' + (skipped ? '（完了予定' + skipped + '件は除外）' : '') + '…';
+      stat.style.color = '#333'; stat.textContent = (dry ? 'ドライラン' : '登録作業') + '開始：' + items.length + '件' + (skipped ? '（完了予定' + skipped + '件は除外）' : '') + '…';
       setTimeout(maybeRunBatchList, 300);
     };
-    q('#kb_run').onclick = function () { if (window.confirm('本番実行します（各物件を自動で開いて入力→登録。確定は手動）。よろしいですか？')) start(false); };
+    q('#kb_run').onclick = function () { if (window.confirm('登録作業を開始します（各物件を自動で開いて完了日を入力→登録まで。確定は手動）。よろしいですか？')) start(false); };
     q('#kb_dry').onclick = function () { start(true); };
     q('#kb_stop').onclick = function () { var bb = bGet(); if (bb) { bb.running = false; bSet(bb); } stat.textContent = '停止しました'; };
   }

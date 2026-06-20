@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.7.1
+// @version      1.7.2
 // @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
@@ -465,11 +465,16 @@
   function bGet() { try { return JSON.parse(localStorage.getItem(K_LS_BATCH) || 'null'); } catch (e) { return null; } }
   function bSet(o) { localStorage.setItem(K_LS_BATCH, JSON.stringify(o)); }
   function bStop(msg) { var b = bGet(); if (b) { b.running = false; bSet(b); } if (msg) alert('一括処理を停止：\n' + msg); }
+  function bFinish(b) {
+    b.running = false; bSet(b);
+    var sk = (b.skipped || []);
+    alert('一括処理 完了\n対象 ' + b.items.length + '件中 登録 ' + (b.items.length - sk.length) + '件' + (b.dry ? '（ドライラン＝実際は未登録）' : '（未確定）') + (sk.length ? '\nスキップ(一覧に無し) ' + sk.length + '件: ' + sk.join('、') : '') + '\n\n各レコードで確認して「確定」を押してください。');
+  }
   function kClick(el) { if (!el) return false; if (window.jQuery) window.jQuery(el).trigger('click'); else el.click(); return true; }
 
   function maybeRunBatchList() {
     var b = bGet(); if (!b || !b.running) return;
-    if (b.idx >= b.items.length) { b.running = false; bSet(b); alert('一括処理 完了：' + b.items.length + '件' + (b.dry ? '（ドライラン）' : '（登録・未確定）') + '。\n各レコードで内容を確認して「確定」を押してください。'); return; }
+    if (b.idx >= b.items.length) { bFinish(b); return; }
     var it = b.items[b.idx];
     if (b.phase === 'search') {
       var ni = document.getElementsByName('txtSearchTtyName')[0];
@@ -489,7 +494,12 @@
         var hasR = !it.room || tds.some(function (t) { return /\d/.test(t) && kNz(t) === kNz(it.room); });
         if (hasB && hasR) target = tr;
       });
-      if (!target) { bStop('一覧に該当行が見つかりません → ' + it.bukken + ' ' + it.room + '（' + (b.idx + 1) + '件目）'); return; }
+      if (!target) { // 一覧に無い→危険ではないのでスキップして次へ
+        b.skipped = b.skipped || []; b.skipped.push(it.bukken + ' ' + (it.room || ''));
+        b.idx++; b.phase = 'search'; bSet(b);
+        if (b.idx >= b.items.length) { bFinish(b); } else { setTimeout(maybeRunBatchList, 400); }
+        return;
+      }
       var det = target.querySelector('div[id^="detail_"]') || target.querySelector('a'); // 詳細ハンドラは内側#detail_N
       setTimeout(function () { kClick(det); }, 400);
       return;
@@ -506,7 +516,7 @@
     var el = document.getElementsByName('txtSyuzenKoujiKanryoDate')[0], cur = el ? el.value : '';
     var advance = function () {
       var bb = bGet(); bb.idx++;
-      if (bb.idx >= bb.items.length) { bb.running = false; bSet(bb); alert('一括処理 完了：' + bb.items.length + '件' + (bb.dry ? '（ドライラン）' : '（登録・未確定）') + '。\n各レコードで確認して「確定」を押してください。'); }
+      if (bb.idx >= bb.items.length) { bFinish(bb); }
       else { bb.phase = 'search'; bSet(bb); setTimeout(function () { location.href = 'repair_list.asp'; }, 600); }
     };
     if (cur === kYmd(it.kanryo)) { advance(); return; }   // 登録済み(or登録後の再読込)→次へ
@@ -549,7 +559,7 @@
       var skipped = all.length - items.length;
       if (!items.length) { stat.style.color = '#c00'; stat.textContent = '登録対象（完了）がありません' + (skipped ? '（完了予定' + skipped + '件は対象外）' : '（形式: 物件名 号室 完了 M/D／発注 M/D）'); return; }
       localStorage.setItem(K_LS_LIST, q('#kb_list').value);
-      bSet({ running: true, dry: !!dry, items: items, idx: 0, phase: 'search' });
+      bSet({ running: true, dry: !!dry, items: items, idx: 0, phase: 'search', skipped: [] });
       stat.style.color = '#333'; stat.textContent = (dry ? 'ドライラン' : '本番') + '開始：' + items.length + '件' + (skipped ? '（完了予定' + skipped + '件は除外）' : '') + '…';
       setTimeout(maybeRunBatchList, 300);
     };

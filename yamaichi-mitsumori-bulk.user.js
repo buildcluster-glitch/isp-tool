@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         山一見積 一括入力（その他商品情報）
 // @namespace    kowa-kogyo.tools
-// @version      1.7.6
+// @version      1.7.7
 // @description  修繕業者WEB(ISP)の見積登録ページに「一括入力」パネルを追加。積算シートの表をそのまま貼り付けて、見積情報＋備考情報＋負担情報へ一括投入（売価単価=見積単価/備考=室名+仕様/依頼元単価=請求単価/家主・契約者の負担%は負担区分から自動）。先頭の担当者ブロックから内容情報フォームへ担当社員・アンペア数も入力（登録は手動）。保存先フォルダのコピー（その他情報の添付用）。重ね貼り時の余り行クリア＆商品名の全タブ同期に対応。／【工事完了ページ】完了日（修繕完了日＋全商品の工事完了日）を一括入力＆登録まで（確定は手動）。
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/order/mitsumori_edit.asp*
 // @match        https://syuzen-yamaichi-j.i-vrdc.com/spodr/repair_comp/repair_comp_edit.asp*
@@ -358,8 +358,16 @@
   // ===================================================================
   var K_LS_LIST = 'isp_kanryo_list', K_LS_AUTO = 'isp_kanryo_auto';
   function kIsPage() { return /\/spodr\/repair_comp\/repair_comp_edit\.asp/i.test(location.pathname); }
-  function kNorm(s) { return String(s || '').replace(/[\s　]/g, '').toLowerCase(); }
+  function kNorm(s) { return String(s || '').replace(/[！-～]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); }).replace(/[\s　]/g, '').toLowerCase(); }
   function kNz(s) { return String(s || '').replace(/^0+/, ''); }
+  // 物件名+号室トークンを分解。末尾が単独アルファベット(±棟)＝棟名→建物名の一部とし号室は空に（例「フェリス泉中央 C」→bukken=フェリス泉中央C/room=空/searchName=フェリス泉中央）。
+  function kSplitNR(tokens) {
+    tokens = (tokens || []).filter(Boolean);
+    if (tokens.length < 2) return { bukken: tokens.join(' '), room: '' };
+    var last = tokens[tokens.length - 1], base = tokens.slice(0, tokens.length - 1).join(' ');
+    if (/^[A-Za-zＡ-Ｚａ-ｚ](棟)?$/.test(last)) return { bukken: base + last, room: '', searchName: base };
+    return { bukken: base, room: last };
+  }
   function kYmd(s) {
     s = String(s || '').trim().replace(/-/g, '/');
     var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
@@ -389,20 +397,15 @@
       var mh = l.match(new RegExp('発注\\s*[:：]?\\s*' + DATE));
       if (mk && mh) {
         var head = l.slice(0, l.indexOf(mk[0])).trim(); // 「完了」より前＝物件名+号室
-        var tk = head.split(/[\s　]+/).filter(Boolean);
-        var room = '', bukken = '';
-        if (tk.length >= 2) { room = tk[tk.length - 1]; bukken = tk.slice(0, tk.length - 1).join(' '); }
-        else { bukken = head; }
-        return { bukken: bukken, room: room, kanryo: kYmd(mk[1]), hatchu: kYmd(mh[1]), yotei: /完了予定/.test(mk[0]) };
+        var nr = kSplitNR(head.split(/[\s　]+/));
+        return { bukken: nr.bukken, room: nr.room, searchName: nr.searchName, kanryo: kYmd(mk[1]), hatchu: kYmd(mh[1]), yotei: /完了予定/.test(mk[0]) };
       }
       // 従来形式（ラベル無し）:「物件名 号室 完了日 発注日」。末尾2つが日付の行だけ採用（クラ助のタイムスタンプ等を除外）
       var t2 = l.split(/[\s,　]+/).filter(Boolean);
       var D = /^(\d{1,2}\/\d{1,2}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})$/;
       if (t2.length >= 3 && D.test(t2[t2.length - 2]) && D.test(t2[t2.length - 1])) {
-        var room2 = '', bk2 = '';
-        if (t2.length >= 4) { room2 = t2[t2.length - 3]; bk2 = t2.slice(0, t2.length - 3).join(' '); }
-        else { bk2 = t2.slice(0, t2.length - 2).join(' '); }
-        return { bukken: bk2, room: room2, kanryo: kYmd(t2[t2.length - 2]), hatchu: kYmd(t2[t2.length - 1]), yotei: false };
+        var nr2 = kSplitNR(t2.slice(0, t2.length - 2));
+        return { bukken: nr2.bukken, room: nr2.room, searchName: nr2.searchName, kanryo: kYmd(t2[t2.length - 2]), hatchu: kYmd(t2[t2.length - 1]), yotei: false };
       }
       return null;
     }).filter(Boolean);
@@ -486,7 +489,7 @@
     var it = b.items[b.idx];
     if (b.phase === 'search') {
       var ni = document.getElementsByName('txtSearchTtyName')[0];
-      if (ni) ni.value = it.bukken;
+      if (ni) ni.value = it.searchName || it.bukken; // 棟付き(フェリス泉中央C)は棟抜き(フェリス泉中央)で広く検索し、行は完全名で選別
       ['txtSearchKoujiNo', 'txtSearchTtyKnrNo', 'txtSearchBasyoName'].forEach(function (n) { var e = document.getElementsByName(n)[0]; if (e) e.value = ''; });
       b.phase = 'open'; bSet(b);
       setTimeout(function () { kClick(document.getElementById('divSearch')); }, 500); // 検索ハンドラは内側#divSearch
